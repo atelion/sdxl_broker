@@ -6,6 +6,7 @@ from diffusers import DiffusionPipeline
 import torch
 import ImageReward as reward
 import random
+import redis
 
 redis_async_result = RedisAsyncResultBackend(
     redis_url="redis://localhost:6379",
@@ -43,12 +44,16 @@ prompts = [
     "A lush rainforest with exotic birds and ancient ruins.",
     "A neon-lit arcade in the 1980s with classic video games."
 ]
+result = []
 
 @broker.task
 async def generate_image(prompt: str):
+    global result
     """Solve all problems in the world."""
-    # scoring_model = reward.load("ImageReward-v1.0")  
-    # print("Scoring model loaded.")
+    pipe = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
+    print("sdxl model is loaded")
+    scoring_model = reward.load("ImageReward-v1.0") 
+    print("Scoring model loaded.")
 
     cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "1")
     gpu_index = int(cuda_visible_devices.split(",")[0])
@@ -57,38 +62,46 @@ async def generate_image(prompt: str):
     print(f"------------------GPU index is {gpu_index} and {torch.cuda.current_device()}--------------------")
     # if using torch < 2.0
     # pipe.enable_xformers_memory_efficient_attention()
-    await asyncio.sleep(5.5)
+    # await asyncio.sleep(5.5)
     print(f"-------------prompt in broker: {prompt}-------------------")
-    pipe = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
-    print("sdxl model is loaded")
-    time.sleep(30)
+    
+    # time.sleep(30)
     print(f"cuda:{gpu_index}")
-    pipe.to(f"cuda:{gpu_index}")    
+    pipe.to("cuda")    
     # _pipe = pipe.to(f"cuda:{gpu_index}")
     images = pipe(prompt=prompt).images[0]
     print("Successfully generated images.")
-    # score = scoring_model.score(prompt, images)
+    score = scoring_model.score(prompt, images)
     
-    
+    result.append({"image": images, "score": score})
     print("All problems are solved!")
     # return images, score
-    return images
+    return score
+
     
 
 async def main():
    
     await broker.startup()
+    r = redis.Redis(host='localhost', port=6379, db=0)
 
     while True:
+        global result
+        
         torch.cuda.set_device(1)
         print(f"------------------{torch.cuda.current_device()} in main--------------------")
         random_int = random.randint(0, 20)
         prompt = prompts[random_int]
         print(f"prompt: {prompt}")
-        task = generate_image.kiq(prompt)
-        await task
-        time.sleep(10)
-
+        for i in range(2):
+            task = generate_image.kiq(prompt)
+            await task
+        print(f"result : {result}")
+        time.sleep(80)
+        print(f"result : {result}")
+        result = []
+        r.flushdb()
+        print(r.dbsize())
 
 if __name__ == "__main__":
     asyncio.run(main())
