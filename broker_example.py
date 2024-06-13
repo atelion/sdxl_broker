@@ -18,31 +18,31 @@ broker = ListQueueBroker(
     result_backend=redis_async_result,
 )
 prompts = [
-    "A futuristic cityscape with flying cars and neon signs in the rain.",
+    # "A futuristic cityscape with flying cars and neon signs in the rain.",
     "A serene forest with ancient trees and a carpet of bluebells.",
-    "An astronaut playing chess with an alien on Mars.",
-    "A steampunk airship docked at a floating island.",
-    "A medieval castle surrounded by a moat with dragons flying overhead.",
-    "A post-apocalyptic wasteland with nature reclaiming a crumbling city.",
-    "A magical library with floating books and glowing orbs of light.",
-    "A cyberpunk street market bustling with robots and holograms.",
-    "An underwater city with merpeople and bioluminescent coral.",
-    "A giant robot battling a monstrous kaiju in the middle of Tokyo.",
-    "A hidden garden with a crystal-clear waterfall and mystical creatures.",
-    "A space station orbiting a vibrant alien planet.",
-    "A Victorian-era detective's office with mysterious artifacts.",
-    "A desert oasis at sunset with camels and nomadic tents.",
-    "A pirate ship sailing through the sky among the clouds.",
-    "A snowy village with cozy cabins and a northern lights display.",
-    "A superhero showdown in a modern metropolis.",
-    "A tranquil Zen garden with cherry blossoms and a koi pond.",
-    "A jazz club in the 1920s with flappers and musicians.",
-    "A high-speed train zooming through a futuristic landscape.",
-    "A haunted mansion with ghosts and eerie candlelight.",
-    "A Viking longship navigating through icy fjords.",
-    "A bustling Renaissance fair with jesters, knights, and artisans.",
-    "A lush rainforest with exotic birds and ancient ruins.",
-    "A neon-lit arcade in the 1980s with classic video games."
+    # "An astronaut playing chess with an alien on Mars.",
+    # "A steampunk airship docked at a floating island.",
+    # "A medieval castle surrounded by a moat with dragons flying overhead.",
+    # "A post-apocalyptic wasteland with nature reclaiming a crumbling city.",
+    # "A magical library with floating books and glowing orbs of light.",
+    # "A cyberpunk street market bustling with robots and holograms.",
+    # "An underwater city with merpeople and bioluminescent coral.",
+    # "A giant robot battling a monstrous kaiju in the middle of Tokyo.",
+    # "A hidden garden with a crystal-clear waterfall and mystical creatures.",
+    # "A space station orbiting a vibrant alien planet.",
+    # "A Victorian-era detective's office with mysterious artifacts.",
+    # "A desert oasis at sunset with camels and nomadic tents.",
+    # "A pirate ship sailing through the sky among the clouds.",
+    # "A snowy village with cozy cabins and a northern lights display.",
+    # "A superhero showdown in a modern metropolis.",
+    # "A tranquil Zen garden with cherry blossoms and a koi pond.",
+    # "A jazz club in the 1920s with flappers and musicians.",
+    # "A high-speed train zooming through a futuristic landscape.",
+    # "A haunted mansion with ghosts and eerie candlelight.",
+    # "A Viking longship navigating through icy fjords.",
+    # "A bustling Renaissance fair with jesters, knights, and artisans.",
+    # "A lush rainforest with exotic birds and ancient ruins.",
+    # "A neon-lit arcade in the 1980s with classic video games."
 ]
 result = []
 def hash_function(input_string: str):
@@ -64,7 +64,7 @@ print("sdxl model is loaded")
 scoring_model = reward.load("ImageReward-v1.0")
 print("Scoring model loaded.")
 @broker.task
-async def generate_image(prompt: str, guidance_scale: int):
+async def generate_image(prompt: str, guidance_scale: int, num_inference_steps: int):
     global result
     """Solve all problems in the world."""
 
@@ -78,8 +78,11 @@ async def generate_image(prompt: str, guidance_scale: int):
     # time.sleep(30)
     pipe.to("cuda")    
     # _pipe = pipe.to(f"cuda:{gpu_index}")
-    images = pipe(prompt=prompt).images
-    print("Successfully generated images.")
+    start_time = time.time()
+    images = pipe(prompt=prompt, num_inference_steps=num_inference_steps, guidance_scale=guidance_scale).images
+    end_time = time.time()
+
+    print(f"Successfully generated images in {end_time-start_time} seconds.")
     score = scoring_model.score(prompt, images)
     # try:
     #     os.mkdir(f"{hash_function(prompt)}")
@@ -101,34 +104,41 @@ async def main():
     while True:
         global result
         random_int = random.randint(0, 20)
-        prompt = prompts[random_int]
+        # prompt = prompts[random_int]
+        prompt = prompts[0]
         start_time = time.time()
         print(f"prompt: {prompt}")
-        num_images = 3
+        num_images = 6
         tasks = []
         results = []
         for i in range(num_images):
             guidance_scale = random.uniform(5, 10)
-            task = await generate_image.kiq(prompt, guidance_scale)
+            task = await generate_image.kiq(prompt, guidance_scale, 35)
             tasks.append(task)
-            # print(task)
-            # task.wait_result()
-            # result.append(await task.get_result())
-            # print(await task.wait_result())
-            # await task
+        
+        generated_images_number = 0
         for task in tasks:
-            result = await task.wait_result()            
-            results.append(result)
+            
+            tmp_time = time.time()
+            if tmp_time - start_time > 60:
+                break
+            result = await task.wait_result()
+            
+            results.append(result.return_value["score"])
+            generated_images_number += 1
+
         print("----------------Result------------------------")
-        print(results)
+        highest_score_result = max(results, key=lambda x: x)
+        print(highest_score_result)
+        # print(results[generated_images_number-1])
         # Note: check if all of {num_images} images are generated
         
         end_time = time.time()
-        print(f"All of {num_images} images are generated in {end_time-start_time} seconds.")
+        print(f"All of {generated_images_number} images are generated in {end_time-start_time} seconds.")
         # time.sleep(30)
         
         r.flushdb()
-        print(r.dbsize())
+        print(f"size of redis db is {r.dbsize()}")
 
 if __name__ == "__main__":
     asyncio.run(main())
