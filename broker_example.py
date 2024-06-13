@@ -45,40 +45,53 @@ prompts = [
     "A neon-lit arcade in the 1980s with classic video games."
 ]
 result = []
-
+def hash_function(input_string: str):
+    """
+    A simple hash function that converts a string input into an integer hash value.
+    
+    Args:
+        input_string (str): The input string to be hashed.
+    
+    Returns:
+        int: The hash value of the input string.
+    """
+    hash_value = 0
+    for char in input_string:
+        hash_value = (hash_value * 31 + ord(char)) % 2**32
+    return hash_value
+pipe = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
+print("sdxl model is loaded")
+scoring_model = reward.load("ImageReward-v1.0")
+print("Scoring model loaded.")
 @broker.task
-async def generate_image(prompt: str):
+async def generate_image(prompt: str, guidance_scale: int):
     global result
     """Solve all problems in the world."""
-    pipe = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
-    print("sdxl model is loaded")
-    scoring_model = reward.load("ImageReward-v1.0") 
-    print("Scoring model loaded.")
 
-    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "1")
-    gpu_index = int(cuda_visible_devices.split(",")[0])
-    device = torch.device(f"cuda:{gpu_index}")
-
-    print(f"------------------GPU index is {gpu_index} and {torch.cuda.current_device()}--------------------")
     # if using torch < 2.0
     # pipe.enable_xformers_memory_efficient_attention()
     # await asyncio.sleep(5.5)
+
     print(f"-------------prompt in broker: {prompt}-------------------")
+    print(f"-------------Guidance_scale in broker: {guidance_scale}-------------------")
     
     # time.sleep(30)
-    print(f"cuda:{gpu_index}")
     pipe.to("cuda")    
     # _pipe = pipe.to(f"cuda:{gpu_index}")
-    images = pipe(prompt=prompt).images[0]
+    images = pipe(prompt=prompt).images
     print("Successfully generated images.")
     score = scoring_model.score(prompt, images)
-    
-    result.append({"image": images, "score": score})
+    # try:
+    #     os.mkdir(f"{hash_function(prompt)}")
+    # except:
+    #     pass
+    # images[0].save(f"{hash_function(prompt)}/{score}.png")
+
+    # result.append({"image": images, "score": score})
+    # print(result)
     print("All problems are solved!")
     # return images, score
-    return score
-
-    
+    return {"prompt": prompt, "score": score}
 
 async def main():
    
@@ -87,19 +100,33 @@ async def main():
 
     while True:
         global result
-        
-        torch.cuda.set_device(1)
-        print(f"------------------{torch.cuda.current_device()} in main--------------------")
         random_int = random.randint(0, 20)
         prompt = prompts[random_int]
+        start_time = time.time()
         print(f"prompt: {prompt}")
-        for i in range(2):
-            task = generate_image.kiq(prompt)
-            await task
-        print(f"result : {result}")
-        time.sleep(80)
-        print(f"result : {result}")
-        result = []
+        num_images = 3
+        tasks = []
+        results = []
+        for i in range(num_images):
+            guidance_scale = random.uniform(5, 10)
+            task = await generate_image.kiq(prompt, guidance_scale)
+            tasks.append(task)
+            # print(task)
+            # task.wait_result()
+            # result.append(await task.get_result())
+            # print(await task.wait_result())
+            # await task
+        for task in tasks:
+            result = await task.wait_result()            
+            results.append(result)
+        print("----------------Result------------------------")
+        print(results)
+        # Note: check if all of {num_images} images are generated
+        
+        end_time = time.time()
+        print(f"All of {num_images} images are generated in {end_time-start_time} seconds.")
+        # time.sleep(30)
+        
         r.flushdb()
         print(r.dbsize())
 
