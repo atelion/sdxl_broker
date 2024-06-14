@@ -7,6 +7,7 @@ import torch
 import ImageReward as reward
 import random
 import redis
+import argparse
 
 redis_async_result = RedisAsyncResultBackend(
     redis_url="redis://localhost:6379",
