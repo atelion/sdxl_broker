@@ -18,6 +18,7 @@ import redis
 import argparse
 from transformers import CLIPImageProcessor
 
+
 redis_async_result = RedisAsyncResultBackend(
     redis_url="redis://localhost:6379",
 )
@@ -28,6 +29,7 @@ broker = ListQueueBroker(
     result_backend=redis_async_result,
 )
 prompts = [
+    "A mischievous goblin finds a shiny, magical stone on a farm, causing the crops to grow disproportionately large overnight.",
     "A serene forest with ancient trees and a carpet of bluebells.",    
 ]
 result = []
@@ -46,21 +48,12 @@ def hash_function(input_string: str):
         hash_value = (hash_value * 31 + ord(char)) % 2**32
     return hash_value
 
-
-t2i_model = AutoPipelineForText2Image.from_pretrained(
-            "stabilityai/stable-diffusion-xl-base-1.0",
-            torch_dtype=torch.float16,
-            use_safetensors=True,
-            variant="fp16",
-        )
-print("sdxl model is loaded")
 scoring_model = reward.load("ImageReward-v1.0")
 print("Scoring model loaded.")
-t2i_model.scheduler = DPMSolverMultistepScheduler.from_config(
-    t2i_model.scheduler.config
-)
-t2i_model.load_lora_weights("checkpoint-4700", weight_name="pytorch_lora_weights.safetensors", adapter_name="imagerewward-lora")
-t2i_model.set_adapters(["imagereward-lora"], adapter_weights=[0.7])
+# t2i_model = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
+# print("sdxl model is loaded")
+# t2i_model.load_lora_weights("checkpoint-5000", weight_name="pytorch_lora_weights.safetensors", adapter_name="imagerewward-lora")
+# t2i_model.set_adapters(["imagereward-lora"], adapter_weights=[19])
 
 def base64_to_pil_image(base64_image):
     image = base64.b64decode(base64_image)
@@ -78,33 +71,36 @@ def pil_image_to_base64(image: Image.Image, format="JPEG") -> str:
     image.save(image_stream, format=format)
     base64_image = base64.b64encode(image_stream.getvalue()).decode("utf-8")
     return base64_image
-
+t2i_model = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
+t2i_model.load_lora_weights("checkpoint-5000", weight_name="pytorch_lora_weights.safetensors", adapter_name="imagereward-lora")
+t2i_model.set_adapters(["imagereward-lora"], adapter_weights=[0.9])
+print("sdxl model is loaded")
 @broker.task
-async def generate_image(prompt: str, guidance_scale: int, num_inference_steps: int):
+async def generate_image(prompt: str, guidance_scale: float, num_inference_steps: int):
+
     global result
     """Solve all problems in the world."""
-
-    # if using torch < 2.0
-    # pipe.enable_xformers_memory_efficient_attention()
-    
-    print(f"-------------prompt in broker: {prompt}-------------------")
-    print(f"-------------Guidance_scale in broker: {guidance_scale}-------------------")
+    start_time = time.time()
     
     t2i_model.to("cuda")
 
-    # _pipe = pipe.to(f"cuda:{gpu_index}")
-    start_time = time.time()
-    images = t2i_model(prompt=prompt, num_inference_steps=num_inference_steps, guidance_scale=7.5).images
+
+
+    # t2i_model.to("cuda")
+
+    
+    images = t2i_model(prompt=prompt, num_inference_steps=num_inference_steps, guidance_scale=guidance_scale).images
     end_time = time.time()
 
     print(f"Successfully generated images in {end_time-start_time} seconds.")
     score = scoring_model.score(prompt, images)
-    print(type(images[0]))
-    
+    # images[0].save(f"lora_{score}.png")
+    # print(type(images[0]))
+
     # Note: encode <class 'PIL.Image.Image'>
     base64_image = pil_image_to_base64(images[0])
     # base64_image = base64.b64encode(image_bytes)
-    print(type(base64_image))
+    # print(type(base64_image))
     print("All problems are solved!")
     # return images, score
     return {"prompt": prompt, "score": score, "image": base64_image}
@@ -116,22 +112,25 @@ async def main():
 
     while True:
         global result
-        random_int = random.randint(0, 20)
+        # Note: Select prompts randomly
+        # random_int = random.randint(0, 20)
         # prompt = prompts[random_int]
+
         prompt = prompts[0]
-        start_time = time.time()
+        
         print(f"prompt: {prompt}")
-        num_images = 8
+        start_time = time.time()
+        num_images = 2
         tasks = []
         results = []
         for i in range(num_images):
-            guidance_scale = random.uniform(5, 10)
+            # guidance_scale = random.uniform(5, 10)
+            guidance_scale = 7.5
             task = await generate_image.kiq(prompt, guidance_scale, 35)
             tasks.append(task)
         
         generated_images_number = 0
-        for task in tasks:
-            
+        for task in tasks:            
             tmp_time = time.time()
             if tmp_time - start_time > 60:
                 break
